@@ -1762,6 +1762,12 @@ gin::Handle<Session> Session::CreateFrom(
   // to use partition strings, instead of using the Session object directly.
   handle->Pin(isolate);
 
+  v8::TryCatch try_catch(isolate);
+  gin_helper::CallMethod(isolate, handle.get(), "_init");
+  if (try_catch.HasCaught()) {
+    node::errors::TriggerUncaughtException(isolate, try_catch);
+  }
+
   App::Get()->EmitWithoutEvent("session-created", handle);
 
   return handle;
@@ -1907,6 +1913,10 @@ void Session::FillObjectTemplate(v8::Isolate* isolate,
 
 const char* Session::GetTypeName() {
   return GetClassName();
+}
+
+void Session::WillBeDestroyed() {
+  ClearWeak();
 }
 
 }  // namespace electron::api

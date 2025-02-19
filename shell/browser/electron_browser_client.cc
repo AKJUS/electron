@@ -53,7 +53,6 @@
 #include "crypto/crypto_buildflags.h"
 #include "electron/buildflags/buildflags.h"
 #include "electron/fuses.h"
-#include "electron/shell/common/api/api.mojom.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
 #include "extensions/common/extension_id.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
@@ -79,6 +78,7 @@
 #include "shell/browser/bluetooth/electron_bluetooth_delegate.h"
 #include "shell/browser/child_web_contents_tracker.h"
 #include "shell/browser/electron_api_ipc_handler_impl.h"
+#include "shell/browser/electron_api_sw_ipc_handler_impl.h"
 #include "shell/browser/electron_autofill_driver_factory.h"
 #include "shell/browser/electron_browser_context.h"
 #include "shell/browser/electron_browser_main_parts.h"
@@ -117,6 +117,7 @@
 #include "shell/common/platform_util.h"
 #include "shell/common/plugin.mojom.h"
 #include "shell/common/thread_restrictions.h"
+#include "shell/common/web_contents_utility.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
@@ -580,6 +581,18 @@ void ElectronBrowserClient::AppendExtraCommandLineSwitches(
       if (web_preferences)
         web_preferences->AppendCommandLineSwitches(
             command_line, IsRendererSubFrame(unsafe_process_id));
+    }
+
+    // Service worker processes should only run preloads if one has been
+    // registered prior to startup.
+    auto* render_process_host = content::RenderProcessHost::FromID(process_id);
+    if (render_process_host) {
+      auto* browser_context = render_process_host->GetBrowserContext();
+      auto* session_prefs =
+          SessionPreferences::FromBrowserContext(browser_context);
+      if (session_prefs->HasServiceWorkerPreloadScript()) {
+        command_line->AppendSwitch(switches::kServiceWorkerPreload);
+      }
     }
   }
 }
@@ -1061,6 +1074,12 @@ void ElectronBrowserClient::
   // reason for it, and we could consider supporting it in future.
   protocol_registry->RegisterURLLoaderFactories(factories,
                                                 false /* allow_file_access */);
+#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
+  factories->emplace(
+      extensions::kExtensionScheme,
+      extensions::CreateExtensionWorkerMainResourceURLLoaderFactory(
+          browser_context));
+#endif
 }
 
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
@@ -1409,6 +1428,13 @@ void ElectronBrowserClient::OverrideURLLoaderFactoryParams(
 void ElectronBrowserClient::RegisterAssociatedInterfaceBindersForServiceWorker(
     const content::ServiceWorkerVersionBaseInfo& service_worker_version_info,
     blink::AssociatedInterfaceRegistry& associated_registry) {
+  CHECK(service_worker_version_info.process_id !=
+        content::ChildProcessHost::kInvalidUniqueID);
+  associated_registry.AddInterface<mojom::ElectronApiIPC>(
+      base::BindRepeating(&ElectronApiSWIPCHandlerImpl::BindReceiver,
+                          service_worker_version_info.process_id,
+                          service_worker_version_info.version_id));
+
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
   associated_registry.AddInterface<extensions::mojom::RendererHost>(
       base::BindRepeating(&extensions::RendererStartupHelper::BindForRenderer,

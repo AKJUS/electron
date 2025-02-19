@@ -288,8 +288,7 @@ void ErrorMessageListener(v8::Local<v8::Message> message,
   node::Environment* env = node::Environment::GetCurrent(isolate);
   if (env) {
     gin_helper::MicrotasksScope microtasks_scope(
-        isolate, env->context()->GetMicrotaskQueue(), false,
-        v8::MicrotasksScope::kDoNotRunMicrotasks);
+        env->context(), false, v8::MicrotasksScope::kDoNotRunMicrotasks);
     // Emit the after() hooks now that the exception has been handled.
     // Analogous to node/lib/internal/process/execution.js#L176-L180
     if (env->async_hooks()->fields()[node::AsyncHooks::kAfter]) {
@@ -325,6 +324,7 @@ bool IsAllowedOption(const std::string_view option) {
 
   // This should be aligned with what's possible to set via the process object.
   static constexpr auto options = base::MakeFixedFlatSet<std::string_view>({
+      "--diagnostic-dir",
       "--dns-result-order",
       "--no-deprecation",
       "--throw-deprecation",
@@ -597,6 +597,7 @@ void NodeBindings::Initialize(v8::Local<v8::Context> context) {
 std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
     v8::Local<v8::Context> context,
     node::MultiIsolatePlatform* platform,
+    size_t max_young_generation_size,
     std::vector<std::string> args,
     std::vector<std::string> exec_args,
     std::optional<base::RepeatingCallback<void()>> on_app_code_ready) {
@@ -647,6 +648,7 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
   args.insert(args.begin() + 1, init_script);
 
   auto* isolate_data = node::CreateIsolateData(isolate, uv_loop_, platform);
+  isolate_data->max_young_gen_size = max_young_generation_size;
   context->SetAlignedPointerInEmbedderData(kElectronContextEmbedderDataIndex,
                                            static_cast<void*>(isolate_data));
 
@@ -784,8 +786,10 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
 std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
     v8::Local<v8::Context> context,
     node::MultiIsolatePlatform* platform,
+    size_t max_young_generation_size,
     std::optional<base::RepeatingCallback<void()>> on_app_code_ready) {
-  return CreateEnvironment(context, platform, ElectronCommandLine::AsUtf8(), {},
+  return CreateEnvironment(context, platform, max_young_generation_size,
+                           ElectronCommandLine::AsUtf8(), {},
                            on_app_code_ready);
 }
 
