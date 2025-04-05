@@ -1788,19 +1788,18 @@ void WebContents::FrameDeleted(content::FrameTreeNodeId frame_tree_node_id) {
 }
 
 void WebContents::RenderViewDeleted(content::RenderViewHost* render_view_host) {
+  const auto id = render_view_host->GetProcess()->GetID().GetUnsafeValue();
   // This event is necessary for tracking any states with respect to
   // intermediate render view hosts aka speculative render view hosts. Currently
   // used by object-registry.js to ref count remote objects.
-  Emit("render-view-deleted",
-       render_view_host->GetProcess()->GetID().GetUnsafeValue());
+  Emit("render-view-deleted", id);
 
   if (web_contents()->GetRenderViewHost() == render_view_host) {
     // When the RVH that has been deleted is the current RVH it means that the
     // the web contents are being closed. This is communicated by this event.
     // Currently tracked by guest-window-manager.ts to destroy the
     // BrowserWindow.
-    Emit("current-render-view-deleted",
-         render_view_host->GetProcess()->GetID().GetUnsafeValue());
+    Emit("current-render-view-deleted", id);
   }
 }
 
@@ -2519,8 +2518,9 @@ void WebContents::RestoreHistory(
     return;
   }
 
-  auto navigation_entries = std::make_unique<
-      std::vector<std::unique_ptr<content::NavigationEntry>>>();
+  auto navigation_entries =
+      std::vector<std::unique_ptr<content::NavigationEntry>>{};
+  navigation_entries.reserve(entries.size());
 
   blink::UserAgentOverride ua_override;
   ua_override.ua_string_override = GetUserAgent();
@@ -2540,14 +2540,13 @@ void WebContents::RestoreHistory(
 
     nav_entry->SetIsOverridingUserAgent(
         !ua_override.ua_string_override.empty());
-    navigation_entries->push_back(
-        std::unique_ptr<content::NavigationEntry>(nav_entry));
+    navigation_entries.emplace_back(nav_entry);
   }
 
-  if (!navigation_entries->empty()) {
+  if (!navigation_entries.empty()) {
     web_contents()->SetUserAgentOverride(ua_override, false);
     web_contents()->GetController().Restore(
-        index, content::RestoreType::kRestored, navigation_entries.get());
+        index, content::RestoreType::kRestored, &navigation_entries);
     web_contents()->GetController().LoadIfNecessary();
   }
 }
