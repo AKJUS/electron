@@ -237,8 +237,7 @@ NativeWindowMac::NativeWindowMac(const gin_helper::Dictionary& options,
     [window_ setLevel:NSFloatingWindowLevel];
   }
 
-  bool focusable;
-  if (options.Get(options::kFocusable, &focusable) && !focusable)
+  if (bool val; options.Get(options::kFocusable, &val) && !val)
     [window_ setDisableKeyOrMainWindow:YES];
 
   if (transparent() || !has_frame()) {
@@ -283,12 +282,10 @@ NativeWindowMac::NativeWindowMac(const gin_helper::Dictionary& options,
   // NOTE(@mlaurencin) Spec requirements can be found here:
   // https://developer.mozilla.org/en-US/docs/Web/API/Window/open#width
   constexpr int kMinSizeReqdBySpec = 100;
-  int inner_width = 0;
-  int inner_height = 0;
+  const int inner_width = options.ValueOrDefault(options::kinnerWidth, 0);
+  const int inner_height = options.ValueOrDefault(options::kinnerHeight, 0);
   bool use_content_size =
       options.ValueOrDefault(options::kUseContentSize, false);
-  options.Get(options::kinnerWidth, &inner_width);
-  options.Get(options::kinnerHeight, &inner_height);
   if (inner_width || inner_height) {
     use_content_size = true;
     if (inner_width)
@@ -1698,28 +1695,28 @@ void NativeWindowMac::Cleanup() {
   [window_ cleanup];
 }
 
-class NativeAppWindowFrameViewMac : public views::NativeFrameViewMac {
+class NativeAppWindowFrameViewMacClient
+    : public views::NativeFrameViewMacClient {
  public:
-  NativeAppWindowFrameViewMac(views::Widget* frame, NativeWindowMac* window)
-      : views::NativeFrameViewMac(frame), native_window_(window) {}
+  NativeAppWindowFrameViewMacClient(views::Widget* frame,
+                                    NativeWindowMac* window)
+      : frame_(frame), native_app_window_(window) {}
 
-  NativeAppWindowFrameViewMac(const NativeAppWindowFrameViewMac&) = delete;
-  NativeAppWindowFrameViewMac& operator=(const NativeAppWindowFrameViewMac&) =
+  NativeAppWindowFrameViewMacClient(const NativeAppWindowFrameViewMacClient&) =
       delete;
+  NativeAppWindowFrameViewMacClient& operator=(
+      const NativeAppWindowFrameViewMacClient&) = delete;
 
-  ~NativeAppWindowFrameViewMac() override = default;
+  ~NativeAppWindowFrameViewMacClient() override = default;
 
-  // NonClientFrameView:
-  int NonClientHitTest(const gfx::Point& point) override {
-    if (!bounds().Contains(point))
-      return HTNOWHERE;
-
-    if (GetWidget()->IsFullscreen())
+  std::optional<int> NonClientHitTest(const gfx::Point& point) override {
+    if (frame_->IsFullscreen()) {
       return HTCLIENT;
+    }
 
     // Check for possible draggable region in the client area for the frameless
     // window.
-    int contents_hit_test = native_window_->NonClientHitTest(point);
+    int contents_hit_test = native_app_window_->NonClientHitTest(point);
     if (contents_hit_test != HTNOWHERE)
       return contents_hit_test;
 
@@ -1727,13 +1724,19 @@ class NativeAppWindowFrameViewMac : public views::NativeFrameViewMac {
   }
 
  private:
-  // Weak.
-  raw_ptr<NativeWindowMac> const native_window_;
+  const raw_ptr<views::Widget> frame_;
+  // Weak. Owned by extensions::AppWindow (which manages our Widget via its
+  // WebContents).
+  const raw_ptr<NativeWindowMac, DanglingUntriaged> native_app_window_;
 };
 
 std::unique_ptr<views::NonClientFrameView>
 NativeWindowMac::CreateNonClientFrameView(views::Widget* widget) {
-  return std::make_unique<NativeAppWindowFrameViewMac>(widget, this);
+  CHECK(!frame_view_client_);
+  frame_view_client_ =
+      std::make_unique<NativeAppWindowFrameViewMacClient>(widget, this);
+  return std::make_unique<views::NativeFrameViewMac>(widget,
+                                                     frame_view_client_.get());
 }
 
 bool NativeWindowMac::HasStyleMask(NSUInteger flag) const {
